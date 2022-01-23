@@ -1,5 +1,6 @@
 import numpy as np
 from onnxruntime import InferenceSession
+
 from onnx_gpt_loop.models import HasGenerationLoop
 
 
@@ -18,29 +19,40 @@ class LoopOnnxModel(HasGenerationLoop):
     At this point you'll have '/tmp/loop.onnx' file path which represents an ONNX
     model with full generation loop blended inside.
     """
+
     def __init__(self, file_path):
         """
         :param file_path: Path to the ONNX loop model.
         """
         self._session = InferenceSession(
             path_or_bytes=str(file_path),
-            providers=['CUDAExecutionProvider'],
+            providers=['CUDAExecutionProvider', 'CPUExecutionProvider'],
         )
 
-    def generate(self, n_steps, prefix_ids, temperature, top_k):
+    def generate(self, n_steps, temperature, top_k, prefix_ids, attention_mask=None, position_ids=None):
         """Runs full GPT inference loop cycle.
 
         :param n_step: Number of tokens to be generated.
-        :param prefix_ids: Prefix token ids.
         :param temperature: Temperature of the tokens sampling distribution.
         :param top_k: Top-k sampling number of tokens.
+        :param prefix_ids: Prefix token ids.
+        :param attention_mask: Initial attention mask. It has the same shape as `prefix_ids`.
+        :param position_ids: Initial position ids. It has the same shape as `prefix_ids`.
 
         :return: Numpy array of generated tokens with shape (batch_size, n_steps).
         """
+        if attention_mask is None:
+            attention_mask = np.ones_like(prefix_ids, dtype=np.float64)
+
+        if position_ids is None:
+            position_ids = np.cumsum(attention_mask, axis=-1, dtype=np.int64) - 1
+
         pasts_input_feed = self._get_pasts_input_feed(batch_size=prefix_ids.shape[0])
         input_feed = {
             'n_steps': np.array([n_steps], dtype=np.int64),
             'input_ids': prefix_ids,
+            'attention_mask': attention_mask,
+            'position_ids': position_ids,
             'temperature': np.array(temperature, dtype=np.float64),
             'top_k': np.array(top_k, dtype=np.int64),
             **pasts_input_feed
@@ -52,8 +64,8 @@ class LoopOnnxModel(HasGenerationLoop):
 
     def _get_pasts_input_feed(self, batch_size):
         pasts_shape = self._session.get_inputs()[-1].shape[:]
-        pasts_shape[0] = batch_size
-        pasts_shape[2] = 0
+        pasts_shape[1] = batch_size
+        pasts_shape[3] = 0
 
         pasts_input_feed = {}
         for inp in self._session.get_inputs():

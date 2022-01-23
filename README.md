@@ -1,9 +1,9 @@
 # ONNX GPT Loop
 Export GPT2 full inference loop to the single ONNX graph.
 
-Such conversion increases inference speed by 20% and
-allows you to generate a full sequence in one call via your
-favorite runtime or inference engine: onnxruntime, triton, etc. 
+Such conversion increases inference speed by 30% with compared with pure PyTorch
+model with cached past-key-value. It allows you to generate a full sequence in
+one call via your favorite runtime or inference engine: onnxruntime, triton, etc. 
 
 [Quick Start](#quick-start)
 
@@ -73,8 +73,8 @@ tokens for 64 candidates.
 python scripts/benchmark.py --model-name gpt2 --batch-size 64 --prefix-seq-len 36 --n-generation-steps 36
 ```
 ```
-Torch: 0.3048s
-ONNX: 0.2423s
+Torch: 0.2250s
+ONNX: 0.1265s
 ```
 
 ### gpt2-medium:
@@ -82,8 +82,8 @@ ONNX: 0.2423s
 python scripts/benchmark.py --model-name gpt2-medium --batch-size 64 --prefix-seq-len 36 --n-generation-steps 36
 ```
 ```
-Torch: 0.6452s
-ONNX: 0.5640s
+Torch: 0.4399s
+ONNX: 0.2616s
 ```
 
 ### gpt2-large:
@@ -91,8 +91,8 @@ ONNX: 0.5640s
 python scripts/benchmark.py --model-name gpt2-large --batch-size 64 --prefix-seq-len 36 --n-generation-steps 36
 ```
 ```
-Torch: 0.9317s
-ONNX: 0.7101s
+Torch: 0.6604s
+ONNX: 0.4434s
 ```
 
 ## How it Works

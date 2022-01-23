@@ -1,9 +1,7 @@
-from itertools import chain
-
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from more_itertools import chunked
 from transformers import GPT2Config, GPT2LMHeadModel
 
 from onnx_gpt_loop.models import HasGenerationLoop
@@ -24,6 +22,7 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
     transformers optimization and should be considered as a starting point
     for the generation speed improvements.
     """
+
     def __init__(self, gpt2: GPT2LMHeadModel):
         """
         :param gpt2: Pretrained GPT2LMHeadModel object.
@@ -68,10 +67,16 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
         return cls(gpt2)
 
     @torch.no_grad()
-    def forward(self, input_ids, temperature, top_k, *past_key_values):
-        past_key_values = list(chunked(past_key_values, 2))
-        out = self._gpt2(input_ids=input_ids, past_key_values=past_key_values)
-        next_token_logits = out.logits[:, -1, :]
+    def forward(self, input_ids, attention_mask, position_ids, temperature, top_k, *past_key_values):
+        out = self._gpt2(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            return_dict=False,
+        )
+
+        next_token_logits = out[0][:, -1, :]
 
         next_token_logits = next_token_logits / temperature
         top_k_logits, top_k_inds = torch.topk(next_token_logits, top_k, sorted=False)
@@ -79,20 +84,56 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
         next_input_ids = torch.multinomial(top_k_probas.type(torch.float32), num_samples=1)
         next_input_ids = top_k_inds.gather(-1, next_input_ids)
 
-        return next_input_ids, *list(chain(*out.past_key_values))
+        next_attention_mask = torch.cat(
+            [attention_mask,
+             torch.ones(
+                 (attention_mask.size(0), 1),
+                 dtype=attention_mask.dtype,
+                 device=self.device,
+             )],
+            dim=-1,
+        )
+        next_position_ids = torch.unsqueeze(position_ids[:, -1] + 1, -1)
+
+        past_key_values = []
+        for i in range(self.num_hidden_layers):
+            # Since transformers v4.*, past key and values are separated outputs.
+            # Here we concate them into one tensor to be compatible with Attention operator.
+            past_key_values.append(torch.cat((out[1][i][0].unsqueeze(0), out[1][i][1].unsqueeze(0)), dim=0))
+
+        return next_input_ids, next_attention_mask, next_position_ids, *past_key_values
 
     @torch.no_grad()
-    def generate(self, n_steps, prefix_ids, temperature, top_k):
+    def generate(
+            self,
+            n_steps,
+            temperature,
+            top_k,
+            prefix_ids,
+            attention_mask=None,
+            position_ids=None,
+    ):
         """Runs full GPT inference loop cycle.
 
         :param n_step: Number of tokens to be generated.
-        :param prefix_ids: Prefix token ids.
         :param temperature: Temperature of the tokens sampling distribution.
         :param top_k: Top-k sampling number of tokens.
+        :param prefix_ids: Prefix token ids.
+        :param attention_mask: Initial attention mask. It has the same shape as `prefix_ids`.
+        :param position_ids: Initial position ids. It has the same shape as `prefix_ids`.
 
         :return: Numpy array of generated tokens with shape (batch_size, n_steps).
         """
+        if attention_mask is None:
+            attention_mask = np.ones_like(prefix_ids, dtype=np.float64)
+
+        if position_ids is None:
+            position_ids = np.cumsum(attention_mask, axis=-1, dtype=np.int64) - 1
+
         prefix_ids = torch.tensor(prefix_ids, dtype=torch.long, device=self.device)
+        attention_mask = torch.tensor(attention_mask, dtype=torch.float64, device=self.device)
+        position_ids = torch.tensor(position_ids, dtype=torch.long, device=self.device)
+
         batch_size = prefix_ids.size()[0]
         pasts = get_dummy_pasts(
             batch_size=batch_size,
@@ -108,13 +149,17 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
         for i_step in range(n_steps):
             out = self.forward(
                 prefix_ids,
+                attention_mask,
+                position_ids,
                 temperature,
                 top_k,
                 *pasts,
             )
 
             prefix_ids = out[0]
+            attention_mask = out[1]
+            position_ids = out[2]
+            pasts = out[3:]
             output_ids[:, i_step] = prefix_ids.squeeze()
-            pasts = out[1:]
 
         return output_ids.cpu().numpy()
