@@ -67,11 +67,11 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
         return cls(gpt2)
 
     @torch.no_grad()
-    def forward(self, input_ids, position_ids, attention_mask, temperature, top_k, *past_key_values):
+    def forward(self, input_ids, temperature, top_k, *past_key_values):
         out = self._gpt2(
             input_ids,
-            position_ids,
-            attention_mask,
+            None,
+            None,
             *past_key_values,
         )
 
@@ -83,10 +83,7 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
         next_input_ids = torch.multinomial(top_k_probas.type(torch.float32), num_samples=1)
         next_input_ids = top_k_inds.gather(-1, next_input_ids)
 
-        next_position_ids = position_ids[:, -1:] + 1
-        next_attention_mask = torch.ones((input_ids.size()[0], input_ids.size()[1] + 1))
-
-        return next_input_ids, next_position_ids, next_attention_mask, *out[1]
+        return next_input_ids, *out[1]
 
     @torch.no_grad()
     def generate(self, n_steps, prefix_ids, temperature, top_k):
@@ -100,9 +97,6 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
         :return: Numpy array of generated tokens with shape (batch_size, n_steps).
         """
         prefix_ids = torch.tensor(prefix_ids, dtype=torch.long, device=self.device)
-        attention_mask = torch.ones_like(prefix_ids)
-        # TODO: make correct position ids:
-        position_ids = torch.ones_like(prefix_ids)
         batch_size = prefix_ids.size()[0]
         pasts = get_dummy_pasts(
             batch_size=batch_size,
@@ -118,16 +112,13 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
         for i_step in range(n_steps):
             out = self.forward(
                 prefix_ids,
-                position_ids,
-                attention_mask,
                 temperature,
                 top_k,
                 *pasts,
             )
 
             prefix_ids = out[0]
-            attention_mask = out[1]
             output_ids[:, i_step] = prefix_ids.squeeze()
-            pasts = out[2:]
+            pasts = out[1:]
 
         return output_ids.cpu().numpy()
