@@ -1,10 +1,8 @@
-from itertools import chain
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from more_itertools import chunked
-from transformers import GPT2Config, GPT2LMHeadModel
+from onnxruntime.transformers.gpt2_helper import MyGPT2LMHeadModel
+from transformers import GPT2Config
 
 from onnx_gpt_loop.models import HasGenerationLoop
 from onnx_gpt_loop.utils import get_dummy_pasts
@@ -24,9 +22,10 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
     transformers optimization and should be considered as a starting point
     for the generation speed improvements.
     """
-    def __init__(self, gpt2: GPT2LMHeadModel):
+
+    def __init__(self, gpt2: MyGPT2LMHeadModel):
         """
-        :param gpt2: Pretrained GPT2LMHeadModel object.
+        :param gpt2: Pretrained MyGPT2LMHeadModel object.
             Convert the gpt2 model to half and eval beforehand::
 
                 one_step_torch_model = OneStepTorchModel(gpt2.half().eval())
@@ -60,17 +59,23 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
             n_head=8,
             use_cache=True,
         )
-        return cls(GPT2LMHeadModel(config))
+        return cls(MyGPT2LMHeadModel(config))
 
     @classmethod
     def from_pretrained(cls, model_name_or_path):
-        gpt2 = GPT2LMHeadModel.from_pretrained(model_name_or_path, use_cache=True)
+        gpt2 = MyGPT2LMHeadModel.from_pretrained(model_name_or_path, use_cache=True)
         return cls(gpt2)
 
     @torch.no_grad()
-    def forward(self, input_ids, temperature, top_k, *past_key_values):
-        out = self._gpt2(input_ids=input_ids, past_key_values=past_key_values)
-        next_token_logits = out.logits[:, -1, :]
+    def forward(self, input_ids, position_ids, attention_mask, temperature, top_k, *past_key_values):
+        out = self._gpt2(
+            input_ids,
+            position_ids,
+            attention_mask,
+            *past_key_values,
+        )
+
+        next_token_logits = out[0][:, -1, :]
 
         next_token_logits = next_token_logits / temperature
         top_k_logits, top_k_inds = torch.topk(next_token_logits, top_k, sorted=False)
@@ -78,7 +83,10 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
         next_input_ids = torch.multinomial(top_k_probas.type(torch.float32), num_samples=1)
         next_input_ids = top_k_inds.gather(-1, next_input_ids)
 
-        return next_input_ids, *out.past_key_values
+        next_position_ids = position_ids[:, -1:] + 1
+        next_attention_mask = torch.ones((input_ids.size()[0], input_ids.size()[1] + 1))
+
+        return next_input_ids, next_position_ids, next_attention_mask, *out[1]
 
     @torch.no_grad()
     def generate(self, n_steps, prefix_ids, temperature, top_k):
@@ -92,6 +100,9 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
         :return: Numpy array of generated tokens with shape (batch_size, n_steps).
         """
         prefix_ids = torch.tensor(prefix_ids, dtype=torch.long, device=self.device)
+        attention_mask = torch.ones_like(prefix_ids)
+        # TODO: make correct position ids:
+        position_ids = torch.ones_like(prefix_ids)
         batch_size = prefix_ids.size()[0]
         pasts = get_dummy_pasts(
             batch_size=batch_size,
@@ -107,13 +118,16 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
         for i_step in range(n_steps):
             out = self.forward(
                 prefix_ids,
+                position_ids,
+                attention_mask,
                 temperature,
                 top_k,
                 *pasts,
             )
 
             prefix_ids = out[0]
+            attention_mask = out[1]
             output_ids[:, i_step] = prefix_ids.squeeze()
-            pasts = out[1:]
+            pasts = out[2:]
 
         return output_ids.cpu().numpy()

@@ -18,13 +18,14 @@ class LoopOnnxModel(HasGenerationLoop):
     At this point you'll have '/tmp/loop.onnx' file path which represents an ONNX
     model with full generation loop blended inside.
     """
+
     def __init__(self, file_path):
         """
         :param file_path: Path to the ONNX loop model.
         """
         self._session = InferenceSession(
             path_or_bytes=str(file_path),
-            providers=['CUDAExecutionProvider'],
+            providers=['CUDAExecutionProvider', 'CPUExecutionProvider'],
         )
 
     def generate(self, n_steps, prefix_ids, temperature, top_k):
@@ -38,9 +39,14 @@ class LoopOnnxModel(HasGenerationLoop):
         :return: Numpy array of generated tokens with shape (batch_size, n_steps).
         """
         pasts_input_feed = self._get_pasts_input_feed(batch_size=prefix_ids.shape[0])
+        # TODO: make correct position ids:
+        position_ids = np.ones_like(prefix_ids)
+        attention_mask = np.ones_like(prefix_ids)
         input_feed = {
             'n_steps': np.array([n_steps], dtype=np.int64),
             'input_ids': prefix_ids,
+            'position_ids': position_ids,
+            'attention_mask': attention_mask,
             'temperature': np.array(temperature, dtype=np.float64),
             'top_k': np.array(top_k, dtype=np.int64),
             **pasts_input_feed
