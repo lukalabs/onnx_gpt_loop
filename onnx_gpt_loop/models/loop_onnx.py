@@ -61,6 +61,6 @@ class LoopOnnxModel(HasGenerationLoop):
         pasts_input_feed = {}
         for inp in self._session.get_inputs():
             if inp.name.startswith('input_past_key_values_'):
-                pasts_input_feed[inp.name] = np.zeros(pasts_shape, dtype=np.float16)
+                pasts_input_feed[inp.name] = np.zeros(pasts_shape, dtype=np.float32)
 
         return pasts_input_feed
