@@ -15,11 +15,13 @@ def get_dummy_pasts(
 
     past_key_values = []
     for _ in range(num_hidden_layers):
+        _past_key_values = []
         for _ in range(2):
-            past_key_values.append(torch.zeros(
+            _past_key_values.append(torch.zeros(
                 shape,
                 device=device,
                 dtype=dtype,
             ))
+        past_key_values.append(torch.stack(_past_key_values))
 
     return past_key_values

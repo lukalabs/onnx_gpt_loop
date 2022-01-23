@@ -68,13 +68,12 @@ def export_one_step_model(model: OneStepTorchModel, out_file_path):
         input_past_key_values_names = []
         output_past_key_values_names = []
         for i in range(model.num_hidden_layers):
-            for j in range(2):
-                input_name = f'input_past_key_values_{i}_{j}'
-                output_name = f'output_past_key_values_{i}_{j}'
-                input_past_key_values_names.append(input_name)
-                output_past_key_values_names.append(output_name)
-                dynamic_axes[input_name] = {0: 'batch_size', 2: f'{input_name}_seq_len'}
-                dynamic_axes[output_name] = {0: 'batch_size', 2: f'{output_name}_seq_len'}
+            input_name = f'input_past_key_values_{i}'
+            output_name = f'output_past_key_values_{i}'
+            input_past_key_values_names.append(input_name)
+            output_past_key_values_names.append(output_name)
+            dynamic_axes[input_name] = {1: 'batch_size', 3: f'{input_name}_seq_len'}
+            dynamic_axes[output_name] = {1: 'batch_size', 3: f'{output_name}_seq_len'}
 
         torch.onnx.export(
             model=model,
@@ -96,10 +95,13 @@ def export_one_step_model(model: OneStepTorchModel, out_file_path):
             use_gpu=True,
         )
 
-        optimized.convert_float_to_float16(keep_io_types=False, force_fp16_initializers=True)
+        optimized.convert_float_to_float16()
+        if not optimized.is_fully_optimized():
+            raise ValueError("Can't optimize model!")
+
         optimized.save_model_to_file(out_file_path, use_external_data_format=False)
 
-    InferenceSession(out_file_path, providers=['CUDAExecutionProvider'])
+    InferenceSession(out_file_path, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
 
 
 def convert_one_step_to_loop_onnx(inp_file_path, out_file_path):
@@ -126,7 +128,7 @@ def _extract_loop_body_and_graph_inputs(file_path):
     top_k = loop_body.input.pop(1)
     input_ids = loop_body.input[0]
     past_key_values = loop_body.input[1:]
-    # ['input_ids', *'past_key_values_{i}_{j}']
+    # ['input_ids', *'past_key_values_{i}']
 
     i_step = helper.make_tensor_value_info('i_step', TensorProto.INT64, [1])
     cond = helper.make_tensor_value_info('cond', onnx.TensorProto.BOOL, [])
@@ -134,12 +136,12 @@ def _extract_loop_body_and_graph_inputs(file_path):
     # Loop and its graph:
     loop_body.input.insert(0, cond)
     loop_body.input.insert(0, i_step)
-    # ['i_step', 'cond', 'input_ids', *'past_key_values_{i}_{j}']
+    # ['i_step', 'cond', 'input_ids', *'past_key_values_{i}']
 
     next_input_ids = loop_body.output[0]
     loop_body.output.insert(0, cond)
     loop_body.output.append(next_input_ids)
-    # ['cond', 'next_input_ids', *'output_past_key_values_{i}_{j}', next_input_ids]
+    # ['cond', 'next_input_ids', *'output_past_key_values_{i}', next_input_ids]
 
     graph_inputs = [temperature, top_k, input_ids, *past_key_values]
     return loop_body, graph_inputs
@@ -187,7 +189,7 @@ def _make_graph(loop_node, graph_inputs):
             squeeze_all_output_ids_3d_node,
         ],
         name='graph',
-        # ['n_steps', 'input_ids', 'temperature', 'top_k', *'past_key_values_{i}_{j}']:
+        # ['n_steps', 'input_ids', 'temperature', 'top_k', *'past_key_values_{i}']:
         inputs=[n_steps] + graph_inputs,
         outputs=[all_output_ids],
     )

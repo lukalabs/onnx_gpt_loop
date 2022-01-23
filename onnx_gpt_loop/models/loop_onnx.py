@@ -52,8 +52,8 @@ class LoopOnnxModel(HasGenerationLoop):
 
     def _get_pasts_input_feed(self, batch_size):
         pasts_shape = self._session.get_inputs()[-1].shape[:]
-        pasts_shape[0] = batch_size
-        pasts_shape[2] = 0
+        pasts_shape[1] = batch_size
+        pasts_shape[3] = 0
 
         pasts_input_feed = {}
         for inp in self._session.get_inputs():

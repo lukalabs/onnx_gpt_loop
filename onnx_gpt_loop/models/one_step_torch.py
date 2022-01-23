@@ -69,7 +69,6 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
 
     @torch.no_grad()
     def forward(self, input_ids, temperature, top_k, *past_key_values):
-        past_key_values = list(chunked(past_key_values, 2))
         out = self._gpt2(input_ids=input_ids, past_key_values=past_key_values)
         next_token_logits = out.logits[:, -1, :]
 
@@ -79,7 +78,7 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
         next_input_ids = torch.multinomial(top_k_probas.type(torch.float32), num_samples=1)
         next_input_ids = top_k_inds.gather(-1, next_input_ids)
 
-        return next_input_ids, *list(chain(*out.past_key_values))
+        return next_input_ids, *out.past_key_values
 
     @torch.no_grad()
     def generate(self, n_steps, prefix_ids, temperature, top_k):
