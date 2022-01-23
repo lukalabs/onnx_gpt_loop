@@ -12,6 +12,9 @@ from onnxruntime.transformers import optimizer
 from onnx_gpt_loop.models.one_step_torch import OneStepTorchModel
 from onnx_gpt_loop.utils import get_dummy_pasts
 
+# onnxruntime can't fuse attention layer of opset versions > 12
+_OPSET_VERSION = 12
+
 
 def export_as_loop_model(model: OneStepTorchModel, out_file_path):
     """Converts `OneStepTorchModel` to the loop ONNX model and
@@ -27,6 +30,8 @@ def export_as_loop_model(model: OneStepTorchModel, out_file_path):
         one_step_onnx_file_path = path.join(tmp_dir, 'one_step.onnx')
         export_one_step_model(model, one_step_onnx_file_path)
         convert_one_step_to_loop_onnx(one_step_onnx_file_path, out_file_path)
+
+    InferenceSession(out_file_path, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
 
 
 def export_one_step_model(model: OneStepTorchModel, out_file_path):
@@ -96,7 +101,7 @@ def export_one_step_model(model: OneStepTorchModel, out_file_path):
             output_names=output_names,
             dynamic_axes=dynamic_axes,
             do_constant_folding=True,
-            opset_version=12,
+            opset_version=_OPSET_VERSION,
             use_external_data_format=True,
         )
 
@@ -111,7 +116,8 @@ def export_one_step_model(model: OneStepTorchModel, out_file_path):
 
         optimized.convert_float_to_float16()
         if not optimized.is_fully_optimized():
-            raise ValueError("Can't optimize model!")
+            # raise ValueError("Can't optimize model!")
+            print("Can't optimize model!")
 
         optimized.save_model_to_file(out_file_path, use_external_data_format=False)
 
@@ -131,15 +137,18 @@ def convert_one_step_to_loop_onnx(inp_file_path, out_file_path):
     loop_node = _make_loop_node(loop_body)
     graph = _make_graph(loop_node, graph_inputs)
 
-    model = helper.make_model(graph)
+    op = onnx.OperatorSetIdProto()
+    op.version = _OPSET_VERSION
+    model = onnx.helper.make_model(graph, opset_imports=[op])
+
     onnx.save(model, out_file_path)
 
 
 def _extract_loop_body_and_graph_inputs(file_path):
     loop_body = onnx.load(file_path).graph
 
-    temperature = loop_body.input.pop(1)
-    top_k = loop_body.input.pop(1)
+    temperature = loop_body.input.pop(2)
+    top_k = loop_body.input.pop(2)
     input_ids = loop_body.input[0]
     attention_mask = loop_body.input[1]
     past_key_values = loop_body.input[2:]

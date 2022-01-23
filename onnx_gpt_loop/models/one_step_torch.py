@@ -81,10 +81,10 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
         top_k_probas = F.softmax(top_k_logits, dim=-1)
         next_input_ids = torch.multinomial(top_k_probas.type(torch.float32), num_samples=1)
         next_input_ids = top_k_inds.gather(-1, next_input_ids)
-        next_attention_mask = torch.cat(
-            [attention_mask, torch.ones((attention_mask.size(0), 1), dtype=attention_mask.dtype)],
-            dim=-1,
-        )
+        # next_attention_mask = torch.cat(
+        #     [attention_mask, torch.ones((attention_mask.size(0), 1), dtype=attention_mask.dtype)],
+        #     dim=-1,
+        # )
 
         past_key_values = []
         for i in range(self.num_hidden_layers):
@@ -92,7 +92,7 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
             # Here we concate them into one tensor to be compatible with Attention operator.
             past_key_values.append(torch.cat((out[1][i][0].unsqueeze(0), out[1][i][1].unsqueeze(0)), dim=0))
 
-        return next_input_ids, next_attention_mask, *past_key_values
+        return next_input_ids, attention_mask, *past_key_values
 
     @torch.no_grad()
     def generate(self, n_steps, prefix_ids, temperature, top_k):
