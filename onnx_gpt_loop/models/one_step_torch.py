@@ -1,8 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from onnxruntime.transformers.gpt2_helper import MyGPT2LMHeadModel
-from transformers import GPT2Config
+from transformers import GPT2Config, GPT2LMHeadModel
 
 from onnx_gpt_loop.models import HasGenerationLoop
 from onnx_gpt_loop.utils import get_dummy_pasts
@@ -23,9 +22,9 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
     for the generation speed improvements.
     """
 
-    def __init__(self, gpt2: MyGPT2LMHeadModel):
+    def __init__(self, gpt2: GPT2LMHeadModel):
         """
-        :param gpt2: Pretrained MyGPT2LMHeadModel object.
+        :param gpt2: Pretrained GPT2LMHeadModel object.
             Convert the gpt2 model to half and eval beforehand::
 
                 one_step_torch_model = OneStepTorchModel(gpt2.half().eval())
@@ -59,20 +58,20 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
             n_head=8,
             use_cache=True,
         )
-        return cls(MyGPT2LMHeadModel(config))
+        return cls(GPT2LMHeadModel(config))
 
     @classmethod
     def from_pretrained(cls, model_name_or_path):
-        gpt2 = MyGPT2LMHeadModel.from_pretrained(model_name_or_path, use_cache=True)
+        gpt2 = GPT2LMHeadModel.from_pretrained(model_name_or_path, use_cache=True)
         return cls(gpt2)
 
     @torch.no_grad()
     def forward(self, input_ids, attention_mask, temperature, top_k, *past_key_values):
         out = self._gpt2(
-            input_ids,
-            None,
-            attention_mask,
-            *past_key_values,
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            past_key_values=past_key_values,
+            return_dict=False,
         )
 
         next_token_logits = out[0][:, -1, :]
@@ -87,7 +86,13 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
             dim=-1,
         )
 
-        return next_input_ids, next_attention_mask, *out[1]
+        past_key_values = []
+        for i in range(self.num_hidden_layers):
+            # Since transformers v4.*, past key and values are separated outputs.
+            # Here we concate them into one tensor to be compatible with Attention operator.
+            past_key_values.append(torch.cat((out[1][i][0].unsqueeze(0), out[1][i][1].unsqueeze(0)), dim=0))
+
+        return next_input_ids, next_attention_mask, *past_key_values
 
     @torch.no_grad()
     def generate(self, n_steps, prefix_ids, temperature, top_k):
@@ -101,7 +106,6 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
         :return: Numpy array of generated tokens with shape (batch_size, n_steps).
         """
         prefix_ids = torch.tensor(prefix_ids, dtype=torch.long, device=self.device)
-        # TODO: make appropriate mask:
         attention_mask = torch.ones_like(prefix_ids)
         batch_size = prefix_ids.size()[0]
         pasts = get_dummy_pasts(
