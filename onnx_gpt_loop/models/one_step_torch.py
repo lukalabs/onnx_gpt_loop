@@ -84,7 +84,12 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
         next_input_ids = top_k_inds.gather(-1, next_input_ids)
 
         next_attention_mask = torch.cat(
-            [attention_mask, torch.ones((attention_mask.size(0), 1), dtype=attention_mask.dtype)],
+            [attention_mask,
+             torch.ones(
+                 (attention_mask.size(0), 1),
+                 dtype=attention_mask.dtype,
+                 device=self.device,
+             )],
             dim=-1,
         )
         next_position_ids = torch.unsqueeze(position_ids[:, -1] + 1, -1)
@@ -98,19 +103,22 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
         return next_input_ids, next_attention_mask, next_position_ids, *past_key_values
 
     @torch.no_grad()
-    def generate(self, n_steps, prefix_ids, temperature, top_k):
+    def generate(self, n_steps, prefix_ids, attention_mask, position_ids, temperature, top_k):
         """Runs full GPT inference loop cycle.
 
         :param n_step: Number of tokens to be generated.
         :param prefix_ids: Prefix token ids.
+        :param attention_mask: Initial attention mask. It has the same shape as `prefix_ids`.
+        :param position_ids: Initial position ids. It has the same shape as `prefix_ids`.
         :param temperature: Temperature of the tokens sampling distribution.
         :param top_k: Top-k sampling number of tokens.
 
         :return: Numpy array of generated tokens with shape (batch_size, n_steps).
         """
         prefix_ids = torch.tensor(prefix_ids, dtype=torch.long, device=self.device)
-        attention_mask = torch.ones_like(prefix_ids)
-        position_ids = torch.ones_like(prefix_ids)
+        attention_mask = torch.tensor(attention_mask, dtype=torch.float64, device=self.device)
+        position_ids = torch.tensor(position_ids, dtype=torch.long, device=self.device)
+
         batch_size = prefix_ids.size()[0]
         pasts = get_dummy_pasts(
             batch_size=batch_size,
@@ -134,7 +142,9 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
             )
 
             prefix_ids = out[0]
+            attention_mask = out[1]
+            position_ids = out[2]
+            pasts = out[3:]
             output_ids[:, i_step] = prefix_ids.squeeze()
-            pasts = out[1:]
 
         return output_ids.cpu().numpy()
