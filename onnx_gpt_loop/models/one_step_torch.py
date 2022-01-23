@@ -67,11 +67,11 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
         return cls(gpt2)
 
     @torch.no_grad()
-    def forward(self, input_ids, temperature, top_k, *past_key_values):
+    def forward(self, input_ids, attention_mask, temperature, top_k, *past_key_values):
         out = self._gpt2(
             input_ids,
             None,
-            None,
+            attention_mask,
             *past_key_values,
         )
 
@@ -82,8 +82,12 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
         top_k_probas = F.softmax(top_k_logits, dim=-1)
         next_input_ids = torch.multinomial(top_k_probas.type(torch.float32), num_samples=1)
         next_input_ids = top_k_inds.gather(-1, next_input_ids)
+        next_attention_mask = torch.cat(
+            [attention_mask, torch.ones((attention_mask.size(0), 1), dtype=attention_mask.dtype)],
+            dim=-1,
+        )
 
-        return next_input_ids, *out[1]
+        return next_input_ids, next_attention_mask, *out[1]
 
     @torch.no_grad()
     def generate(self, n_steps, prefix_ids, temperature, top_k):
@@ -97,6 +101,8 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
         :return: Numpy array of generated tokens with shape (batch_size, n_steps).
         """
         prefix_ids = torch.tensor(prefix_ids, dtype=torch.long, device=self.device)
+        # TODO: make appropriate mask:
+        attention_mask = torch.ones_like(prefix_ids)
         batch_size = prefix_ids.size()[0]
         pasts = get_dummy_pasts(
             batch_size=batch_size,
@@ -112,6 +118,7 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
         for i_step in range(n_steps):
             out = self.forward(
                 prefix_ids,
+                attention_mask,
                 temperature,
                 top_k,
                 *pasts,

@@ -28,11 +28,12 @@ class LoopOnnxModel(HasGenerationLoop):
             providers=['CUDAExecutionProvider', 'CPUExecutionProvider'],
         )
 
-    def generate(self, n_steps, prefix_ids, temperature, top_k):
+    def generate(self, n_steps, attention_mask, prefix_ids, temperature, top_k):
         """Runs full GPT inference loop cycle.
 
         :param n_step: Number of tokens to be generated.
         :param prefix_ids: Prefix token ids.
+        :param attention_mask: Initial attention mask. It has the same shape as `prefix_ids`.
         :param temperature: Temperature of the tokens sampling distribution.
         :param top_k: Top-k sampling number of tokens.
 
@@ -42,6 +43,7 @@ class LoopOnnxModel(HasGenerationLoop):
         input_feed = {
             'n_steps': np.array([n_steps], dtype=np.int64),
             'input_ids': prefix_ids,
+            'attention_mask': attention_mask,
             'temperature': np.array(temperature, dtype=np.float64),
             'top_k': np.array(top_k, dtype=np.int64),
             **pasts_input_feed

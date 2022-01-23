@@ -47,6 +47,7 @@ def export_one_step_model(model: OneStepTorchModel, out_file_path):
         top_k = 50
 
         input_ids = torch.ones((batch_size, seq_len), dtype=torch.long, device=model.device)
+        attention_mask = torch.ones_like(input_ids)
         past_key_values = get_dummy_pasts(
             batch_size=batch_size,
             seq_len=0,
@@ -58,10 +59,18 @@ def export_one_step_model(model: OneStepTorchModel, out_file_path):
         dynamic_axes = {
             'input_ids': {
                 0: 'batch_size',
-                1: 'input_seq_len',
+                1: 'input_seq_len'
             },
             'next_input_ids': {
                 0: 'batch_size'
+            },
+            'attention_mask': {
+                0: 'batch_size',
+                1: 'input_seq_len'
+            },
+            'next_attention_mask': {
+                0: 'batch_size',
+                1: 'input_seq_len'
             },
         }
 
@@ -75,19 +84,19 @@ def export_one_step_model(model: OneStepTorchModel, out_file_path):
             dynamic_axes[input_name] = {1: 'batch_size', 3: f'{input_name}_seq_len'}
             dynamic_axes[output_name] = {1: 'batch_size', 3: f'{output_name}_seq_len'}
 
-        input_names = ['input_ids', 'temperature', 'top_k']
+        input_names = ['input_ids', 'attention_mask', 'temperature', 'top_k']
         input_names += input_past_key_values_names
-        output_names = ['next_input_ids']
+        output_names = ['next_input_ids', 'next_attention_mask']
         output_names += output_past_key_values_names
         torch.onnx.export(
             model=model,
-            args=tuple([input_ids, temperature, top_k] + past_key_values),
+            args=tuple([input_ids, attention_mask, temperature, top_k] + past_key_values),
             f=onnx_file_path,
             input_names=input_names,
             output_names=output_names,
             dynamic_axes=dynamic_axes,
-            do_constant_folding=False,
-            opset_version=11,
+            do_constant_folding=True,
+            opset_version=12,
             use_external_data_format=True,
         )
 
@@ -102,8 +111,7 @@ def export_one_step_model(model: OneStepTorchModel, out_file_path):
 
         optimized.convert_float_to_float16()
         if not optimized.is_fully_optimized():
-            # raise ValueError("Can't optimize model!")
-            print("Can't optimize model!")
+            raise ValueError("Can't optimize model!")
 
         optimized.save_model_to_file(out_file_path, use_external_data_format=False)
 
@@ -133,8 +141,9 @@ def _extract_loop_body_and_graph_inputs(file_path):
     temperature = loop_body.input.pop(1)
     top_k = loop_body.input.pop(1)
     input_ids = loop_body.input[0]
-    past_key_values = loop_body.input[1:]
-    # ['input_ids', *'past_key_values_{i}']
+    attention_mask = loop_body.input[1]
+    past_key_values = loop_body.input[2:]
+    # ['input_ids', 'attention_mask', *'past_key_values_{i}']
 
     i_step = helper.make_tensor_value_info('i_step', TensorProto.INT64, [1])
     cond = helper.make_tensor_value_info('cond', onnx.TensorProto.BOOL, [])
@@ -142,14 +151,14 @@ def _extract_loop_body_and_graph_inputs(file_path):
     # Loop and its graph:
     loop_body.input.insert(0, cond)
     loop_body.input.insert(0, i_step)
-    # ['i_step', 'cond', 'input_ids', *'past_key_values_{i}']
+    # ['i_step', 'cond', 'input_ids', 'attention_mask', *'past_key_values_{i}']
 
     next_input_ids = loop_body.output[0]
     loop_body.output.insert(0, cond)
     loop_body.output.append(next_input_ids)
-    # ['cond', 'next_input_ids', *'output_past_key_values_{i}', next_input_ids]
+    # ['cond', 'next_input_ids', 'next_attention_mask', *'output_past_key_values_{i}', next_input_ids]
 
-    graph_inputs = [temperature, top_k, input_ids, *past_key_values]
+    graph_inputs = [temperature, top_k, input_ids, attention_mask, *past_key_values]
     return loop_body, graph_inputs
 
 
@@ -195,7 +204,7 @@ def _make_graph(loop_node, graph_inputs):
             squeeze_all_output_ids_3d_node,
         ],
         name='graph',
-        # ['n_steps', 'input_ids', 'temperature', 'top_k', *'past_key_values_{i}']:
+        # ['n_steps', 'input_ids', 'attention_mask', 'temperature', 'top_k', *'past_key_values_{i}']:
         inputs=[n_steps] + graph_inputs,
         outputs=[all_output_ids],
     )
