@@ -66,10 +66,11 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
         return cls(gpt2)
 
     @torch.no_grad()
-    def forward(self, input_ids, attention_mask, temperature, top_k, *past_key_values):
+    def forward(self, input_ids, attention_mask, position_ids, temperature, top_k, *past_key_values):
         out = self._gpt2(
             input_ids=input_ids,
             attention_mask=attention_mask,
+            position_ids=position_ids,
             past_key_values=past_key_values,
             return_dict=False,
         )
@@ -81,10 +82,12 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
         top_k_probas = F.softmax(top_k_logits, dim=-1)
         next_input_ids = torch.multinomial(top_k_probas.type(torch.float32), num_samples=1)
         next_input_ids = top_k_inds.gather(-1, next_input_ids)
-        # next_attention_mask = torch.cat(
-        #     [attention_mask, torch.ones((attention_mask.size(0), 1), dtype=attention_mask.dtype)],
-        #     dim=-1,
-        # )
+
+        next_attention_mask = torch.cat(
+            [attention_mask, torch.ones((attention_mask.size(0), 1), dtype=attention_mask.dtype)],
+            dim=-1,
+        )
+        next_position_ids = torch.unsqueeze(position_ids[:, -1] + 1, -1)
 
         past_key_values = []
         for i in range(self.num_hidden_layers):
@@ -92,7 +95,7 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
             # Here we concate them into one tensor to be compatible with Attention operator.
             past_key_values.append(torch.cat((out[1][i][0].unsqueeze(0), out[1][i][1].unsqueeze(0)), dim=0))
 
-        return next_input_ids, attention_mask, *past_key_values
+        return next_input_ids, next_attention_mask, next_position_ids, *past_key_values
 
     @torch.no_grad()
     def generate(self, n_steps, prefix_ids, temperature, top_k):
@@ -107,6 +110,7 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
         """
         prefix_ids = torch.tensor(prefix_ids, dtype=torch.long, device=self.device)
         attention_mask = torch.ones_like(prefix_ids)
+        position_ids = torch.ones_like(prefix_ids)
         batch_size = prefix_ids.size()[0]
         pasts = get_dummy_pasts(
             batch_size=batch_size,
@@ -123,6 +127,7 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
             out = self.forward(
                 prefix_ids,
                 attention_mask,
+                position_ids,
                 temperature,
                 top_k,
                 *pasts,

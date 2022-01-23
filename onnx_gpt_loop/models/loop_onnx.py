@@ -28,12 +28,13 @@ class LoopOnnxModel(HasGenerationLoop):
             providers=['CUDAExecutionProvider', 'CPUExecutionProvider'],
         )
 
-    def generate(self, n_steps, attention_mask, prefix_ids, temperature, top_k):
+    def generate(self, n_steps, attention_mask, position_ids, prefix_ids, temperature, top_k):
         """Runs full GPT inference loop cycle.
 
         :param n_step: Number of tokens to be generated.
         :param prefix_ids: Prefix token ids.
         :param attention_mask: Initial attention mask. It has the same shape as `prefix_ids`.
+        :param position_ids: Initial position ids. It has the same shape as `prefix_ids`.
         :param temperature: Temperature of the tokens sampling distribution.
         :param top_k: Top-k sampling number of tokens.
 
@@ -44,6 +45,7 @@ class LoopOnnxModel(HasGenerationLoop):
             'n_steps': np.array([n_steps], dtype=np.int64),
             'input_ids': prefix_ids,
             'attention_mask': attention_mask,
+            'position_ids': position_ids,
             'temperature': np.array(temperature, dtype=np.float64),
             'top_k': np.array(top_k, dtype=np.int64),
             **pasts_input_feed
@@ -61,6 +63,6 @@ class LoopOnnxModel(HasGenerationLoop):
         pasts_input_feed = {}
         for inp in self._session.get_inputs():
             if inp.name.startswith('input_past_key_values_'):
-                pasts_input_feed[inp.name] = np.zeros(pasts_shape, dtype=np.float32)
+                pasts_input_feed[inp.name] = np.zeros(pasts_shape, dtype=np.float16)
 
         return pasts_input_feed
