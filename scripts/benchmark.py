@@ -74,16 +74,12 @@ def _benchmark_generation_loop(
 ):
 
     prefix_ids = np.ones((batch_size, prefix_seq_len), dtype=np.int64)
-    attention_mask = np.ones_like(prefix_ids, dtype=np.float64)
-    position_ids = np.ones_like(prefix_ids)
     step_seconds = []
     for _ in tqdm.trange(n_benchmark_steps, desc=model.__class__.__name__):
         start_time = datetime.datetime.now()
         model.generate(
             n_steps=n_generation_steps,
             prefix_ids=prefix_ids,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
             temperature=0.7,
             top_k=50,
         )

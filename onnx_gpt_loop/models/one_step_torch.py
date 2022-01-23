@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -103,18 +104,32 @@ class OneStepTorchModel(nn.Module, HasGenerationLoop):
         return next_input_ids, next_attention_mask, next_position_ids, *past_key_values
 
     @torch.no_grad()
-    def generate(self, n_steps, prefix_ids, attention_mask, position_ids, temperature, top_k):
+    def generate(
+            self,
+            n_steps,
+            temperature,
+            top_k,
+            prefix_ids,
+            attention_mask=None,
+            position_ids=None,
+    ):
         """Runs full GPT inference loop cycle.
 
         :param n_step: Number of tokens to be generated.
+        :param temperature: Temperature of the tokens sampling distribution.
+        :param top_k: Top-k sampling number of tokens.
         :param prefix_ids: Prefix token ids.
         :param attention_mask: Initial attention mask. It has the same shape as `prefix_ids`.
         :param position_ids: Initial position ids. It has the same shape as `prefix_ids`.
-        :param temperature: Temperature of the tokens sampling distribution.
-        :param top_k: Top-k sampling number of tokens.
 
         :return: Numpy array of generated tokens with shape (batch_size, n_steps).
         """
+        if attention_mask is None:
+            attention_mask = np.ones_like(prefix_ids, dtype=np.float64)
+
+        if position_ids is None:
+            position_ids = np.cumsum(attention_mask, axis=-1, dtype=np.int64) - 1
+
         prefix_ids = torch.tensor(prefix_ids, dtype=torch.long, device=self.device)
         attention_mask = torch.tensor(attention_mask, dtype=torch.float64, device=self.device)
         position_ids = torch.tensor(position_ids, dtype=torch.long, device=self.device)

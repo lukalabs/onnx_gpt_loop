@@ -1,5 +1,6 @@
 import numpy as np
 from onnxruntime import InferenceSession
+
 from onnx_gpt_loop.models import HasGenerationLoop
 
 
@@ -28,18 +29,24 @@ class LoopOnnxModel(HasGenerationLoop):
             providers=['CUDAExecutionProvider', 'CPUExecutionProvider'],
         )
 
-    def generate(self, n_steps, attention_mask, position_ids, prefix_ids, temperature, top_k):
+    def generate(self, n_steps, temperature, top_k, prefix_ids, attention_mask=None, position_ids=None):
         """Runs full GPT inference loop cycle.
 
         :param n_step: Number of tokens to be generated.
+        :param temperature: Temperature of the tokens sampling distribution.
+        :param top_k: Top-k sampling number of tokens.
         :param prefix_ids: Prefix token ids.
         :param attention_mask: Initial attention mask. It has the same shape as `prefix_ids`.
         :param position_ids: Initial position ids. It has the same shape as `prefix_ids`.
-        :param temperature: Temperature of the tokens sampling distribution.
-        :param top_k: Top-k sampling number of tokens.
 
         :return: Numpy array of generated tokens with shape (batch_size, n_steps).
         """
+        if attention_mask is None:
+            attention_mask = np.ones_like(prefix_ids, dtype=np.float64)
+
+        if position_ids is None:
+            position_ids = np.cumsum(attention_mask, axis=-1, dtype=np.int64) - 1
+
         pasts_input_feed = self._get_pasts_input_feed(batch_size=prefix_ids.shape[0])
         input_feed = {
             'n_steps': np.array([n_steps], dtype=np.int64),

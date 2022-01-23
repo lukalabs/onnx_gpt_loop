@@ -1,7 +1,7 @@
 # ONNX GPT Loop
 Export GPT2 full inference loop to the single ONNX graph.
 
-Such conversion increases inference speed by 20% with compared with pure PyTorch
+Such conversion increases inference speed by 30% with compared with pure PyTorch
 model with cached past-key-value. It allows you to generate a full sequence in
 one call via your favorite runtime or inference engine: onnxruntime, triton, etc. 
 
