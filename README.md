@@ -14,7 +14,7 @@ one call via your favorite runtime or inference engine: onnxruntime, triton, etc
 ## Quick Start
 Start a container:
 ```
-git clone https://github.com/alexeykarnachev/onnx_gpt_loop.git && \
+git clone https://github.com/lukalabs/onnx_gpt_loop.git && \
 cd onnx_gpt_loop && \
 docker build -t onnx_gpt_loop . && \
 docker run --name onnx_gpt_loop -d -it --rm --gpus all --network host onnx_gpt_loop
@@ -217,13 +217,5 @@ from 3d to 2d shape (batch_size, n_steps).
 That's it. The final Loop Node looks like [this](images/loop_node.png),
 and the Loop Graph for 5 layers GPT [here](images/loop_graph.png). 
 
-
-
-
-
-
-
-
-
-
-
+## License
+© 2022 Luka, Inc. Licensed under the Apache License, Version 2.0. See LICENSE file for more details.
